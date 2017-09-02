@@ -12,10 +12,10 @@ extern crate tokio_core as tokio;
 mod errors;
 
 use std::env;
-use tokio::reactor::Core;
+use tokio::reactor::{Core, Handle};
 use reqwest::unstable::async::Client;
 use reqwest::Url;
-use futures::Future;
+use futures::{future, Future};
 use errors::*;
 
 // TODO: Integrate https://crates.io/crates/alpm-sys
@@ -24,7 +24,8 @@ use errors::*;
 /*
 
  Commands:
-    --download, -d      Download the PKGBUILD tarball and extract it in the current directory (requires exact name)
+    --download, -d      Download the PKGBUILD tarball and extract it in
+                            the current directory (requires exact name)
     --search, -s        Search (what this does now without arguments)
     --info, -i          Show verbose information for a given package (must be exact name)
 
@@ -62,40 +63,54 @@ quick_main!(|| -> Result<()> {
 
     let mut core = Core::new()?;
 
-    let client = Client::new(&core.handle())?;
-    let url = Url::parse_with_params(
-        "https://aur.archlinux.org/rpc/",
-        &[
-            ("v", "5"),
-            ("type", "search"),
-            ("by", "name-desc"),
-            ("arg", term),
-        ],
-    )?;
+    let work = search(core.handle(), term.clone()).and_then(|response| {
+        for result in response.results {
+            print_search_result(&result)?;
+        }
 
-    let work = client
-        .get(url)?
-        .send()
-        .and_then(|mut response| response.json())
-        .from_err()
-        .and_then(|mut response: SearchResponse| -> Result<()> {
-            // TODO: --sort votes,popularity,+name (votes)
-
-            response
-                .results
-                .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
-
-            for result in response.results.iter().rev() {
-                print_search_result(result)?
-            }
-
-            Ok(())
-        });
+        Ok(())
+    });
 
     core.run(work)?;
 
     Ok(())
 });
+
+// TODO(@rust): impl Future
+fn search(handle: Handle, term: String) -> Box<Future<Item = SearchResponse, Error = Error>> {
+    Box::new(
+        future::lazy(move || -> Result<_> {
+            let client = Client::new(&handle)?;
+            let url = Url::parse_with_params(
+                "https://aur.archlinux.org/rpc/",
+                &[
+                    ("v", "5"),
+                    ("type", "search"),
+                    ("by", "name-desc"),
+                    ("arg", &term),
+                ],
+            )?;
+
+            Ok(client.get(url)?)
+        })
+            // Send the request ..
+            .and_then(|mut request| request.send().from_err())
+            // Parse the request as JSON ..
+            // TODO: Handle errors
+            .and_then(|mut response| response.json().from_err())
+            .and_then(|mut response: SearchResponse| {
+                // TODO: --sort votes,popularity,+name (votes)
+
+                response
+                    .results
+                    .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
+
+                response.results.reverse();
+
+                Ok(response)
+            }),
+    )
+}
 
 fn print_search_result(result: &SearchResult) -> Result<()> {
     let mut t = term::stdout().chain_err(|| "failed to acquire terminal")?;
@@ -113,10 +128,10 @@ fn print_search_result(result: &SearchResult) -> Result<()> {
 
     write!(t, " ({}, {:.2})", result.num_votes, result.popularity)?;
 
-    t.fg(term::color::CYAN)?;
+    // t.fg(term::color::CYAN)?;
 
     // TODO: Pre-query this information with pacman
-    write!(t, " [installed]")?;
+    // write!(t, " [installed]")?;
 
     t.reset()?;
 
