@@ -1,19 +1,25 @@
 #[macro_use]
+extern crate clap;
+#[macro_use]
 extern crate error_chain;
+extern crate flate2;
 extern crate futures;
 extern crate reqwest;
 #[allow(unused_extern_crates)]
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate tar;
 extern crate term;
 extern crate tokio_core as tokio;
 
 mod errors;
+mod cli;
 
-use std::fs::File;
+use std::path::Path;
+use tar::Archive;
+use flate2::read::GzDecoder;
 use std::mem;
-use std::env;
 use std::io::{self, Write};
 use tokio::reactor::{Core, Handle};
 use reqwest::unstable::async::{Client, Decoder};
@@ -24,16 +30,10 @@ use errors::*;
 // TODO: Integrate https://crates.io/crates/alpm-sys
 // TODO: With alpm-sys, ask if a package is installed (use a threadpool) during a search
 // TODO: Grab a CPU pool already
-// TODO: Add clap:
-/*
-
- Commands:
-    --download, -d      Download the PKGBUILD tarball and extract it in
-                            the current directory (requires exact name)
-    --search, -s        Search (what this does now without arguments)
-    --info, -i          Show verbose information for a given package (must be exact name)
-
- */
+// TODO: Allow N packages for info and download
+// TODO: Show error if we don't match on info and download
+// TODO: Use term-size to wrap search result descriptions
+// TODO: Use a better terminal color lib (this one is so verbose)
 
 // https://wiki.archlinux.org/index.php/AurJson#info
 
@@ -62,32 +62,58 @@ struct AurResponse {
 }
 
 quick_main!(|| -> Result<()> {
-    let argv = env::args().collect::<Vec<_>>();
-    let term = &argv[1];
+    let matches = cli::build().get_matches();
 
     let mut core = Core::new()?;
     let handle = core.handle();
 
-    // let work = search(&handle, term).and_then(|response| {
-    //     for result in response.results {
-    //         print_search_result(&result)?;
-    //     }
+    match matches.subcommand() {
+        ("search", Some(matches)) => {
+            // NOTE: Clap checks that term is present
+            let term = matches.value_of("term").unwrap();
+            let work = search(&handle, term).and_then(|response| {
+                for result in response.results {
+                    print_search_result(&result)?;
+                }
 
-    //     Ok(())
-    // });
+                Ok(())
+            });
 
-    let work = info(&handle, "atom-editor-beta-bin").and_then(|response| {
-        let mut work = vec![];
-
-        for result in response.results {
-            // print_info_result(&result)?;
-            work.push(download(&handle, result));
+            core.run(work)?;
         }
 
-        future::join_all(work)
-    });
+        ("info", Some(matches)) => {
+            // NOTE: Clap checks that package is present
+            let package = matches.value_of("package").unwrap();
+            let work = info(&handle, package).and_then(|response| {
+                for result in response.results {
+                    print_info_result(&result)?;
+                }
 
-    core.run(work)?;
+                Ok(())
+            });
+
+            core.run(work)?;
+        }
+
+        ("download", Some(matches)) => {
+            // NOTE: Clap checks that package is present
+            let package = matches.value_of("package").unwrap();
+            let work = info(&handle, package).and_then(|response| {
+                let mut work = vec![];
+
+                for result in response.results {
+                    work.push(download(&handle, result, "."));
+                }
+
+                future::join_all(work)
+            });
+
+            core.run(work)?;
+        }
+
+        _ => {}
+    }
 
     Ok(())
 });
@@ -159,9 +185,10 @@ fn search<'a>(
 
 // TODO(@rust): impl Future
 // TODO: Allow N packages (should run concurrently with async)
-fn download<'a>(
+fn download<'a, P: AsRef<Path> + 'static>(
     handle: &'a Handle,
     package: AurPackage,
+    dst: P,
 ) -> Box<Future<Item = (), Error = Error> + 'a> {
     let url_path = package.url_path.clone();
 
@@ -182,13 +209,13 @@ fn download<'a>(
             .and_then(move |mut response| {
                 // TODO(@reqwest): I own the response, I should be able to _take_ the body?
                 let body = mem::replace(response.body_mut(), Decoder::empty());
-                // TODO: Infer the file format and name from the url_path
-                // TODO: Use a CPU pool for all this fs stuff
-                Ok((body, File::create(&format!("{}.tar.gz", package.name))?))
-            }).and_then(|(body, mut f)| {
-                body.from_err().for_each(move |chunk| -> Result<()> {
-                    // TODO: Use a CPU pool for all this fs stuff
-                    f.write_all(&chunk)?;
+                body.from_err().concat2().and_then(move |bytes| -> Result<()> {
+                    // TODO: This should all be in a threadloop
+
+                    let decoder = GzDecoder::new(bytes.as_ref())?;
+                    let mut archive = Archive::new(decoder);
+
+                    archive.unpack(dst)?;
 
                     Ok(())
                 })
