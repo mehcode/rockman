@@ -82,7 +82,7 @@ quick_main!(|| -> Result<()> {
 
         ("info", Some(matches)) => {
             // NOTE: Clap checks that package is present
-            let package = matches.value_of("package").unwrap();
+            let package = matches.values_of("package").unwrap();
             let work = info(package).and_then(|response| {
                 for result in response.results {
                     print_info_result(&result)?;
@@ -96,7 +96,7 @@ quick_main!(|| -> Result<()> {
 
         ("download", Some(matches)) => {
             // NOTE: Clap checks that package is present
-            let package = matches.value_of("package").unwrap();
+            let package = matches.values_of("package").unwrap();
             let work = info(package).and_then(|response| {
                 let mut work = vec![];
 
@@ -146,9 +146,10 @@ fn aur_query<'a, P>(
         .and_then(|mut response| response.json().from_err())
 }
 
-// TODO: Allow N packages
-fn info<'a>(package: &'a str) -> impl Future<Item = AurResponse, Error = Error> + 'a {
-    aur_query("info", vec![("arg[]", package)])
+fn info<'a, I>(packages: I) -> impl Future<Item = AurResponse, Error = Error> + 'a
+    where I: IntoIterator<Item = &'a str> + 'a
+{
+    aur_query("info", std::iter::repeat("arg[]").zip(packages))
 }
 
 // TODO: Allow selecting search fields: name-desc, name, maintainer
