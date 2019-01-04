@@ -117,12 +117,13 @@ quick_main!(|| -> Result<()> {
     Ok(())
 });
 
-// TODO(@rust): Borrowing is hard across a future, figure out how to not pass in a Vec here
 // TODO: kind should be an enum of "info" or "search"
-fn aur_query<'a>(
+fn aur_query<'a, P>(
     kind: &'a str,
-    parameters: Vec<(&'a str, &'a str)>,
-) -> impl Future<Item = AurResponse, Error = Error> + 'a {
+    parameters: P,
+) -> impl Future<Item = AurResponse, Error = Error> + 'a
+    where P: IntoIterator<Item=(&'a str, &'a str)> + 'a
+{
     future::lazy(move || -> Result<_> {
         let client = Client::new();
         let mut params = vec![
@@ -130,7 +131,7 @@ fn aur_query<'a>(
             ("type", kind),
         ];
 
-        params.extend(&parameters);
+        params.extend(parameters);
 
         let url = Url::parse_with_params(
             "https://aur.archlinux.org/rpc/",
