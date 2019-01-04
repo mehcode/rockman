@@ -142,7 +142,7 @@ fn aur_query<'a>(
             Ok(client.get(url))
         })
             // Send the request ..
-            .and_then(|mut request| request.send().from_err())
+            .and_then(|request| request.send().from_err())
             // Parse the request as JSON ..
             // TODO: Handle errors
             .and_then(|mut response| response.json().from_err()),
@@ -198,7 +198,7 @@ fn download<'a, P: AsRef<Path> + 'static>(
             Ok(client.get(&url))
         })
             // Send the request ..
-            .and_then(|mut request| request.send().from_err())
+            .and_then(|request| request.send().from_err())
             // Write out the response to a file
             // TODO: Handle errors
             .and_then(move |mut response| {
