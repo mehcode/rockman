@@ -19,7 +19,6 @@ mod cli;
 use std::path::Path;
 use tar::Archive;
 use flate2::read::GzDecoder;
-use std::mem;
 use std::io::{self, Write};
 use tokio::reactor::{Core};
 use reqwest::async::{Client, Decoder};
@@ -187,10 +186,8 @@ fn download<'a, P: AsRef<Path> + 'a>(
         .and_then(|request| request.send().from_err())
         // Write out the response to a file
         // TODO: Handle errors
-        .and_then(move |mut response| {
-            // TODO(@reqwest): I own the response, I should be able to _take_ the body?
-            let body = mem::replace(response.body_mut(), Decoder::empty());
-            body.from_err().concat2().and_then(move |bytes| -> Result<()> {
+        .and_then(move |response| {
+            response.into_body().from_err().concat2().and_then(move |bytes| -> Result<()> {
                 // TODO: This should all be in a threadloop
 
                 let decoder = GzDecoder::new(bytes.as_ref())?;
