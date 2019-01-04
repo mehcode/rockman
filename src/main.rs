@@ -22,7 +22,7 @@ use flate2::read::GzDecoder;
 use std::mem;
 use std::io::{self, Write};
 use tokio::reactor::{Core, Handle};
-use reqwest::unstable::async::{Client, Decoder};
+use reqwest::async::{Client, Decoder};
 use reqwest::Url;
 use futures::{future, Future, Stream};
 use errors::*;
@@ -122,13 +122,12 @@ quick_main!(|| -> Result<()> {
 // TODO(@rust): Borrowing is hard across a future, figure out how to not pass in a Vec here
 // TODO: kind should be an enum of "info" or "search"
 fn aur_query<'a>(
-    handle: &'a Handle,
     kind: &'a str,
     parameters: Vec<(&'a str, &'a str)>,
 ) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
     Box::new(
         future::lazy(move || -> Result<_> {
-            let client = Client::new(handle)?;
+            let client = Client::new();
             let mut params = vec![
                 ("v", "5"),
                 ("type", kind),
@@ -141,7 +140,7 @@ fn aur_query<'a>(
                 &params,
             )?;
 
-            Ok(client.get(url)?)
+            Ok(client.get(url))
         })
             // Send the request ..
             .and_then(|mut request| request.send().from_err())
@@ -157,7 +156,7 @@ fn info<'a>(
     handle: &'a Handle,
     package: &'a str,
 ) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    aur_query(handle, "info", vec![("arg[]", package)])
+    aur_query("info", vec![("arg[]", package)])
 }
 
 // TODO(@rust): impl Future
@@ -167,7 +166,7 @@ fn search<'a>(
     term: &'a str,
 ) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
     Box::new(
-        aur_query(handle, "search", vec![("by", "name-desc"), ("arg", term)]).map(
+        aur_query("search", vec![("by", "name-desc"), ("arg", term)]).map(
             |mut response: AurResponse| {
                 // TODO: --sort votes,popularity,+name (votes)
 
@@ -194,13 +193,13 @@ fn download<'a, P: AsRef<Path> + 'static>(
 
     Box::new(
         future::lazy(move || -> Result<_> {
-            let client = Client::new(handle)?;
+            let client = Client::new();
             let url = format!(
                 "https://aur.archlinux.org{}",
                 url_path,
             );
 
-            Ok(client.get(&url)?)
+            Ok(client.get(&url))
         })
             // Send the request ..
             .and_then(|mut request| request.send().from_err())
