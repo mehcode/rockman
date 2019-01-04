@@ -117,65 +117,54 @@ quick_main!(|| -> Result<()> {
     Ok(())
 });
 
-// TODO(@rust): impl Future
 // TODO(@rust): Borrowing is hard across a future, figure out how to not pass in a Vec here
 // TODO: kind should be an enum of "info" or "search"
 fn aur_query<'a>(
     kind: &'a str,
     parameters: Vec<(&'a str, &'a str)>,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    Box::new(
-        future::lazy(move || -> Result<_> {
-            let client = Client::new();
-            let mut params = vec![
-                ("v", "5"),
-                ("type", kind),
-            ];
+) -> impl Future<Item = AurResponse, Error = Error> + 'a {
+    future::lazy(move || -> Result<_> {
+        let client = Client::new();
+        let mut params = vec![
+            ("v", "5"),
+            ("type", kind),
+        ];
 
-            params.extend(&parameters);
+        params.extend(&parameters);
 
-            let url = Url::parse_with_params(
-                "https://aur.archlinux.org/rpc/",
-                &params,
-            )?;
+        let url = Url::parse_with_params(
+            "https://aur.archlinux.org/rpc/",
+            &params,
+        )?;
 
-            Ok(client.get(url))
-        })
-            // Send the request ..
-            .and_then(|request| request.send().from_err())
-            // Parse the request as JSON ..
-            // TODO: Handle errors
-            .and_then(|mut response| response.json().from_err()),
-    )
+        Ok(client.get(url))
+    })
+        // Send the request ..
+        .and_then(|request| request.send().from_err())
+        // Parse the request as JSON ..
+        // TODO: Handle errors
+        .and_then(|mut response| response.json().from_err())
 }
 
-// TODO(@rust): impl Future
 // TODO: Allow N packages
-fn info<'a>(
-    package: &'a str,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
+fn info<'a>(package: &'a str) -> impl Future<Item = AurResponse, Error = Error> + 'a {
     aur_query("info", vec![("arg[]", package)])
 }
 
-// TODO(@rust): impl Future
 // TODO: Allow selecting search fields: name-desc, name, maintainer
-fn search<'a>(
-    term: &'a str,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    Box::new(
-        aur_query("search", vec![("by", "name-desc"), ("arg", term)]).map(
-            |mut response: AurResponse| {
-                // TODO: --sort votes,popularity,+name (votes)
+fn search<'a>(term: &'a str) -> impl Future<Item = AurResponse, Error = Error> + 'a {
+    aur_query("search", vec![("by", "name-desc"), ("arg", term)]).map(
+        |mut response: AurResponse| {
+            // TODO: --sort votes,popularity,+name (votes)
 
-                response
-                    .results
-                    .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
+            response
+                .results
+                .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
 
-                response.results.reverse();
+            response.results.reverse();
 
-                response
-            },
-        ),
+            response
+        },
     )
 }
 
@@ -184,38 +173,36 @@ fn search<'a>(
 fn download<'a, P: AsRef<Path> + 'static>(
     package: AurPackage,
     dst: P,
-) -> Box<Future<Item = (), Error = Error> + 'a> {
+) -> impl Future<Item = (), Error = Error> + 'a {
     let url_path = package.url_path.clone();
 
-    Box::new(
-        future::lazy(move || -> Result<_> {
-            let client = Client::new();
-            let url = format!(
-                "https://aur.archlinux.org{}",
-                url_path,
-            );
+    future::lazy(move || -> Result<_> {
+        let client = Client::new();
+        let url = format!(
+            "https://aur.archlinux.org{}",
+            url_path,
+        );
 
-            Ok(client.get(&url))
+        Ok(client.get(&url))
+    })
+        // Send the request ..
+        .and_then(|request| request.send().from_err())
+        // Write out the response to a file
+        // TODO: Handle errors
+        .and_then(move |mut response| {
+            // TODO(@reqwest): I own the response, I should be able to _take_ the body?
+            let body = mem::replace(response.body_mut(), Decoder::empty());
+            body.from_err().concat2().and_then(move |bytes| -> Result<()> {
+                // TODO: This should all be in a threadloop
+
+                let decoder = GzDecoder::new(bytes.as_ref())?;
+                let mut archive = Archive::new(decoder);
+
+                archive.unpack(dst)?;
+
+                Ok(())
+            })
         })
-            // Send the request ..
-            .and_then(|request| request.send().from_err())
-            // Write out the response to a file
-            // TODO: Handle errors
-            .and_then(move |mut response| {
-                // TODO(@reqwest): I own the response, I should be able to _take_ the body?
-                let body = mem::replace(response.body_mut(), Decoder::empty());
-                body.from_err().concat2().and_then(move |bytes| -> Result<()> {
-                    // TODO: This should all be in a threadloop
-
-                    let decoder = GzDecoder::new(bytes.as_ref())?;
-                    let mut archive = Archive::new(decoder);
-
-                    archive.unpack(dst)?;
-
-                    Ok(())
-                })
-            }),
-    )
 }
 
 fn print_search_result(result: &AurPackage) -> Result<()> {
