@@ -159,9 +159,7 @@ fn search<'a>(term: &'a str) -> impl Future<Item = AurResponse, Error = Error> +
 
             response
                 .results
-                .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
-
-            response.results.reverse();
+                .sort_by(|a, b| b.num_votes.cmp(&a.num_votes));
 
             response
         },
@@ -235,7 +233,7 @@ fn print_search_result(result: &AurPackage) -> Result<()> {
 }
 
 fn print_info_field(
-    t: &mut Box<term::Terminal<Output = io::Stdout> + Send>,
+    t: &mut term::Terminal<Output = io::Stdout>,
     key: &str,
     value: &str,
 ) -> Result<()> {
@@ -252,7 +250,8 @@ fn print_info_field(
 }
 
 fn print_info_result(result: &AurPackage) -> Result<()> {
-    let mut t = term::stdout().chain_err(|| "failed to acquire terminal")?;
+    let ti = term::terminfo::TermInfo::from_env()?;
+    let mut t = term::terminfo::TerminfoTerminal::new_with_terminfo(io::stdout(), ti);
 
     print_info_field(&mut t, "Name", &result.name)?;
     print_info_field(&mut t, "Version", &result.version)?;
