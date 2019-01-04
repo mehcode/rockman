@@ -71,7 +71,7 @@ quick_main!(|| -> Result<()> {
         ("search", Some(matches)) => {
             // NOTE: Clap checks that term is present
             let term = matches.value_of("term").unwrap();
-            let work = search(&handle, term).and_then(|response| {
+            let work = search(term).and_then(|response| {
                 for result in response.results {
                     print_search_result(&result)?;
                 }
@@ -161,7 +161,6 @@ fn info<'a>(
 // TODO(@rust): impl Future
 // TODO: Allow selecting search fields: name-desc, name, maintainer
 fn search<'a>(
-    handle: &'a Handle,
     term: &'a str,
 ) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
     Box::new(
