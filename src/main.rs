@@ -21,7 +21,7 @@ use tar::Archive;
 use flate2::read::GzDecoder;
 use std::mem;
 use std::io::{self, Write};
-use tokio::reactor::{Core, Handle};
+use tokio::reactor::{Core};
 use reqwest::async::{Client, Decoder};
 use reqwest::Url;
 use futures::{future, Future, Stream};
@@ -65,7 +65,6 @@ quick_main!(|| -> Result<()> {
     let matches = cli::build().get_matches();
 
     let mut core = Core::new()?;
-    let handle = core.handle();
 
     match matches.subcommand() {
         ("search", Some(matches)) => {
@@ -103,7 +102,7 @@ quick_main!(|| -> Result<()> {
                 let mut work = vec![];
 
                 for result in response.results {
-                    work.push(download(&handle, result, "."));
+                    work.push(download(result, "."));
                 }
 
                 future::join_all(work)
@@ -183,7 +182,6 @@ fn search<'a>(
 // TODO(@rust): impl Future
 // TODO: Allow N packages (should run concurrently with async)
 fn download<'a, P: AsRef<Path> + 'static>(
-    handle: &'a Handle,
     package: AurPackage,
     dst: P,
 ) -> Box<Future<Item = (), Error = Error> + 'a> {
