@@ -85,7 +85,7 @@ quick_main!(|| -> Result<()> {
         ("info", Some(matches)) => {
             // NOTE: Clap checks that package is present
             let package = matches.value_of("package").unwrap();
-            let work = info(&handle, package).and_then(|response| {
+            let work = info(package).and_then(|response| {
                 for result in response.results {
                     print_info_result(&result)?;
                 }
@@ -99,7 +99,7 @@ quick_main!(|| -> Result<()> {
         ("download", Some(matches)) => {
             // NOTE: Clap checks that package is present
             let package = matches.value_of("package").unwrap();
-            let work = info(&handle, package).and_then(|response| {
+            let work = info(package).and_then(|response| {
                 let mut work = vec![];
 
                 for result in response.results {
@@ -153,7 +153,6 @@ fn aur_query<'a>(
 // TODO(@rust): impl Future
 // TODO: Allow N packages
 fn info<'a>(
-    handle: &'a Handle,
     package: &'a str,
 ) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
     aur_query("info", vec![("arg[]", package)])
