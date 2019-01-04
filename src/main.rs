@@ -19,10 +19,9 @@ mod cli;
 use std::path::Path;
 use tar::Archive;
 use flate2::read::GzDecoder;
-use std::mem;
 use std::io::{self, Write};
-use tokio::reactor::{Core, Handle};
-use reqwest::unstable::async::{Client, Decoder};
+use tokio::reactor::Core;
+use reqwest::async::Client;
 use reqwest::Url;
 use futures::{future, Future, Stream};
 use errors::*;
@@ -30,7 +29,6 @@ use errors::*;
 // TODO: Integrate https://crates.io/crates/alpm-sys
 // TODO: With alpm-sys, ask if a package is installed (use a threadpool) during a search
 // TODO: Grab a CPU pool already
-// TODO: Allow N packages for info and download
 // TODO: Show error if we don't match on info and download
 // TODO: Use term-size to wrap search result descriptions
 // TODO: Use a better terminal color lib (this one is so verbose)
@@ -54,6 +52,8 @@ struct AurPackage {
     first_submitted: u32,
     last_modified: u32,
     #[serde(rename = "URLPath")] url_path: String,
+    depends: Option<Vec<String>>,
+    make_depends: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,13 +65,12 @@ quick_main!(|| -> Result<()> {
     let matches = cli::build().get_matches();
 
     let mut core = Core::new()?;
-    let handle = core.handle();
 
     match matches.subcommand() {
         ("search", Some(matches)) => {
             // NOTE: Clap checks that term is present
             let term = matches.value_of("term").unwrap();
-            let work = search(&handle, term).and_then(|response| {
+            let work = search(term).and_then(|response| {
                 for result in response.results {
                     print_search_result(&result)?;
                 }
@@ -84,8 +83,8 @@ quick_main!(|| -> Result<()> {
 
         ("info", Some(matches)) => {
             // NOTE: Clap checks that package is present
-            let package = matches.value_of("package").unwrap();
-            let work = info(&handle, package).and_then(|response| {
+            let package = matches.values_of("package").unwrap();
+            let work = info(package).and_then(|response| {
                 for result in response.results {
                     print_info_result(&result)?;
                 }
@@ -98,12 +97,12 @@ quick_main!(|| -> Result<()> {
 
         ("download", Some(matches)) => {
             // NOTE: Clap checks that package is present
-            let package = matches.value_of("package").unwrap();
-            let work = info(&handle, package).and_then(|response| {
+            let package = matches.values_of("package").unwrap();
+            let work = info(package).and_then(|response| {
                 let mut work = vec![];
 
                 for result in response.results {
-                    work.push(download(&handle, result, "."));
+                    work.push(download(result, "."));
                 }
 
                 future::join_all(work)
@@ -118,109 +117,86 @@ quick_main!(|| -> Result<()> {
     Ok(())
 });
 
-// TODO(@rust): impl Future
-// TODO(@rust): Borrowing is hard across a future, figure out how to not pass in a Vec here
 // TODO: kind should be an enum of "info" or "search"
-fn aur_query<'a>(
-    handle: &'a Handle,
+fn aur_query<'a, P>(
     kind: &'a str,
-    parameters: Vec<(&'a str, &'a str)>,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    Box::new(
-        future::lazy(move || -> Result<_> {
-            let client = Client::new(handle)?;
-            let mut params = vec![
-                ("v", "5"),
-                ("type", kind),
-            ];
+    parameters: P,
+) -> impl Future<Item = AurResponse, Error = Error> + 'a
+    where P: IntoIterator<Item=(&'a str, &'a str)> + 'a
+{
+    future::lazy(move || -> Result<_> {
+        let client = Client::new();
+        let mut params = vec![
+            ("v", "5"),
+            ("type", kind),
+        ];
 
-            params.extend(&parameters);
+        params.extend(parameters);
 
-            let url = Url::parse_with_params(
-                "https://aur.archlinux.org/rpc/",
-                &params,
-            )?;
+        let url = Url::parse_with_params(
+            "https://aur.archlinux.org/rpc/",
+            &params,
+        )?;
 
-            Ok(client.get(url)?)
-        })
-            // Send the request ..
-            .and_then(|mut request| request.send().from_err())
-            // Parse the request as JSON ..
-            // TODO: Handle errors
-            .and_then(|mut response| response.json().from_err()),
-    )
+        Ok(client.get(url))
+    })
+        // Send the request ..
+        .and_then(|request| request.send().from_err())
+        // Parse the request as JSON ..
+        // TODO: Handle errors
+        .and_then(|mut response| response.json().from_err())
 }
 
-// TODO(@rust): impl Future
-// TODO: Allow N packages
-fn info<'a>(
-    handle: &'a Handle,
-    package: &'a str,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    aur_query(handle, "info", vec![("arg[]", package)])
+fn info<'a, I>(packages: I) -> impl Future<Item = AurResponse, Error = Error> + 'a
+    where I: IntoIterator<Item = &'a str> + 'a
+{
+    aur_query("info", std::iter::repeat("arg[]").zip(packages))
 }
 
-// TODO(@rust): impl Future
 // TODO: Allow selecting search fields: name-desc, name, maintainer
-fn search<'a>(
-    handle: &'a Handle,
-    term: &'a str,
-) -> Box<Future<Item = AurResponse, Error = Error> + 'a> {
-    Box::new(
-        aur_query(handle, "search", vec![("by", "name-desc"), ("arg", term)]).map(
-            |mut response: AurResponse| {
-                // TODO: --sort votes,popularity,+name (votes)
+fn search<'a>(term: &'a str) -> impl Future<Item = AurResponse, Error = Error> + 'a {
+    aur_query("search", vec![("by", "name-desc"), ("arg", term)]).map(
+        |mut response: AurResponse| {
+            // TODO: --sort votes,popularity,+name (votes)
 
-                response
-                    .results
-                    .sort_by(|a, b| a.num_votes.cmp(&b.num_votes));
+            response
+                .results
+                .sort_by(|a, b| b.num_votes.cmp(&a.num_votes));
 
-                response.results.reverse();
-
-                response
-            },
-        ),
+            response
+        },
     )
 }
 
-// TODO(@rust): impl Future
-// TODO: Allow N packages (should run concurrently with async)
-fn download<'a, P: AsRef<Path> + 'static>(
-    handle: &'a Handle,
+fn download<'a, P: AsRef<Path> + 'a>(
     package: AurPackage,
     dst: P,
-) -> Box<Future<Item = (), Error = Error> + 'a> {
-    let url_path = package.url_path.clone();
+) -> impl Future<Item = (), Error = Error> + 'a {
+    future::lazy(move || -> Result<_> {
+        let client = Client::new();
+        let url = format!(
+            "https://aur.archlinux.org{}",
+            package.url_path,
+        );
 
-    Box::new(
-        future::lazy(move || -> Result<_> {
-            let client = Client::new(handle)?;
-            let url = format!(
-                "https://aur.archlinux.org{}",
-                url_path,
-            );
+        Ok(client.get(&url))
+    })
+        // Send the request ..
+        .and_then(|request| request.send().from_err())
+        // Write out the response to a file
+        // TODO: Handle errors
+        .and_then(move |response| {
+            response.into_body().from_err().concat2().and_then(move |bytes| -> Result<()> {
+                // TODO: This should all be in a threadloop
 
-            Ok(client.get(&url)?)
+                let decoder = GzDecoder::new(bytes.as_ref())?;
+                let mut archive = Archive::new(decoder);
+
+                archive.unpack(dst)?;
+
+                Ok(())
+            })
         })
-            // Send the request ..
-            .and_then(|mut request| request.send().from_err())
-            // Write out the response to a file
-            // TODO: Handle errors
-            .and_then(move |mut response| {
-                // TODO(@reqwest): I own the response, I should be able to _take_ the body?
-                let body = mem::replace(response.body_mut(), Decoder::empty());
-                body.from_err().concat2().and_then(move |bytes| -> Result<()> {
-                    // TODO: This should all be in a threadloop
-
-                    let decoder = GzDecoder::new(bytes.as_ref())?;
-                    let mut archive = Archive::new(decoder);
-
-                    archive.unpack(dst)?;
-
-                    Ok(())
-                })
-            }),
-    )
 }
 
 fn print_search_result(result: &AurPackage) -> Result<()> {
@@ -248,24 +224,32 @@ fn print_search_result(result: &AurPackage) -> Result<()> {
 
     writeln!(t, "")?;
 
-    // TODO: Write out entire description line-by-line, using terminal width
-    let mut desc = result.description.clone();
-    desc.truncate(120);
-
-    writeln!(t, "    {}...", desc)?;
+    // TODO: Write out using terminal width
+    let mut to_print = String::new();
+    let mut current_line = 0;
+    for word in result.description.split_whitespace(){
+        if current_line > 0 && word.len() + current_line > 80 {
+            to_print.push_str("\n    ");
+            current_line = 0;
+        }
+        to_print.push_str(" ");
+        to_print.push_str(word);
+        current_line += word.len();
+    }
+    writeln!(t, "    {}", to_print)?;
 
     Ok(())
 }
 
 fn print_info_field(
-    t: &mut Box<term::Terminal<Output = io::Stdout> + Send>,
+    t: &mut term::Terminal<Output = io::Stdout>,
     key: &str,
     value: &str,
 ) -> Result<()> {
     t.fg(term::color::BRIGHT_WHITE)?;
     t.attr(term::Attr::Bold)?;
 
-    write!(t, "{:15} :", key)?;
+    write!(t, "{:12} :", key)?;
 
     t.reset()?;
 
@@ -275,14 +259,20 @@ fn print_info_field(
 }
 
 fn print_info_result(result: &AurPackage) -> Result<()> {
-    let mut t = term::stdout().chain_err(|| "failed to acquire terminal")?;
+    let ti = term::terminfo::TermInfo::from_env()?;
+    let mut t = term::terminfo::TerminfoTerminal::new_with_terminfo(io::stdout(), ti);
 
     print_info_field(&mut t, "Name", &result.name)?;
     print_info_field(&mut t, "Version", &result.version)?;
     print_info_field(&mut t, "Description", &result.description)?;
     print_info_field(&mut t, "URL", &result.url)?;
     print_info_field(&mut t, "Votes", &format!("{}", result.num_votes))?;
-
+    if let Some(ref dep) = result.depends {
+        print_info_field(&mut t, "Depends", &format!("{}", dep.join(", ")))?;
+    }
+    if let Some(ref mkdep) = result.make_depends {
+        print_info_field(&mut t, "Make Depends", &format!("{}", mkdep.join(", ")))?;
+    }
     // TODO: More fields
 
     writeln!(t, "")?;

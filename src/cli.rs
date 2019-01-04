@@ -11,14 +11,14 @@ fn info() -> App<'static, 'static> {
     SubCommand::with_name("info")
         .long_about("Show information for package")
         .setting(AppSettings::ColoredHelp)
-        .arg(Arg::with_name("package").required(true).index(1))
+        .arg(Arg::with_name("package").required(true).index(1).multiple(true))
 }
 
 fn download() -> App<'static, 'static> {
     SubCommand::with_name("download")
         .long_about("Download snapshot for package")
         .setting(AppSettings::ColoredHelp)
-        .arg(Arg::with_name("package").required(true).index(1))
+        .arg(Arg::with_name("package").required(true).index(1).multiple(true))
 }
 
 pub fn build() -> App<'static, 'static> {
