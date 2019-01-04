@@ -169,19 +169,16 @@ fn search<'a>(term: &'a str) -> impl Future<Item = AurResponse, Error = Error> +
     )
 }
 
-// TODO(@rust): impl Future
 // TODO: Allow N packages (should run concurrently with async)
-fn download<'a, P: AsRef<Path> + 'static>(
+fn download<'a, P: AsRef<Path> + 'a>(
     package: AurPackage,
     dst: P,
 ) -> impl Future<Item = (), Error = Error> + 'a {
-    let url_path = package.url_path.clone();
-
     future::lazy(move || -> Result<_> {
         let client = Client::new();
         let url = format!(
             "https://aur.archlinux.org{}",
-            url_path,
+            package.url_path,
         );
 
         Ok(client.get(&url))
