@@ -224,11 +224,19 @@ fn print_search_result(result: &AurPackage) -> Result<()> {
 
     writeln!(t, "")?;
 
-    // TODO: Write out entire description line-by-line, using terminal width
-    let mut desc = result.description.clone();
-    desc.truncate(120);
-
-    writeln!(t, "    {}...", desc)?;
+    // TODO: Write out using terminal width
+    let mut to_print = String::new();
+    let mut current_line = 0;
+    for word in result.description.split_whitespace(){
+        if current_line > 0 && word.len() + current_line > 80 {
+            to_print.push_str("\n    ");
+            current_line = 0;
+        }
+        to_print.push_str(" ");
+        to_print.push_str(word);
+        current_line += word.len();
+    }
+    writeln!(t, "    {}", to_print)?;
 
     Ok(())
 }
