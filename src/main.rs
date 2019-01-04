@@ -52,6 +52,8 @@ struct AurPackage {
     first_submitted: u32,
     last_modified: u32,
     #[serde(rename = "URLPath")] url_path: String,
+    depends: Vec<String>,
+    make_depends: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -257,7 +259,10 @@ fn print_info_result(result: &AurPackage) -> Result<()> {
     print_info_field(&mut t, "Description", &result.description)?;
     print_info_field(&mut t, "URL", &result.url)?;
     print_info_field(&mut t, "Votes", &format!("{}", result.num_votes))?;
-
+    print_info_field(&mut t, "Depends", &format!("{}", result.depends.join(", ")))?;
+    if let Some(ref mkdep) = result.make_depends {
+        print_info_field(&mut t, "Make Depends", &format!("{}", mkdep.join(", ")))?;
+    }
     // TODO: More fields
 
     writeln!(t, "")?;
