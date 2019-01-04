@@ -29,7 +29,6 @@ use errors::*;
 // TODO: Integrate https://crates.io/crates/alpm-sys
 // TODO: With alpm-sys, ask if a package is installed (use a threadpool) during a search
 // TODO: Grab a CPU pool already
-// TODO: Allow N packages for info and download
 // TODO: Show error if we don't match on info and download
 // TODO: Use term-size to wrap search result descriptions
 // TODO: Use a better terminal color lib (this one is so verbose)
@@ -167,7 +166,6 @@ fn search<'a>(term: &'a str) -> impl Future<Item = AurResponse, Error = Error> +
     )
 }
 
-// TODO: Allow N packages (should run concurrently with async)
 fn download<'a, P: AsRef<Path> + 'a>(
     package: AurPackage,
     dst: P,
